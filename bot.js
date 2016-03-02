@@ -77,6 +77,7 @@ if (!process.env.token) {
 var Botkit = require('./lib/Botkit.js');
 var os = require('os');
 /* SAM ADDITIONS */
+var http = require('http');
 var _ = require('lodash');
 var AYLIENTextAPI = require('aylien_textapi');
 var textapi = new AYLIENTextAPI({
@@ -304,3 +305,9 @@ function formatUptime(uptime) {
     uptime = uptime + ' ' + unit;
     return uptime;
 }
+
+// To keep Heroku's free dyno awake
+http.createServer(function(request, response) {
+    response.writeHead(200, {'Content-Type': 'text/plain'});
+    response.end('Ok, dyno is awake.');
+}).listen(process.env.PORT || 5000);
