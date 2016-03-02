@@ -61,6 +61,11 @@ This bot demonstrates many of the core features of Botkit:
 
     -> http://howdy.ai/botkit
 
+# SAM added:
+- Make the bot summarize and extract text with aylien
+- quote somerset maugham
+- recognize more greetings, and respond with more variety
+
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
 
 
@@ -71,17 +76,44 @@ if (!process.env.token) {
 
 var Botkit = require('./lib/Botkit.js');
 var os = require('os');
+/* SAM ADDITIONS */
+var _ = require('lodash');
+var AYLIENTextAPI = require('aylien_textapi');
+var textapi = new AYLIENTextAPI({
+  application_id: '43e52631',
+  application_key: '9d8f9559517a6ebf279f5fadd26687b1'
+});
+
+var SOMERSET_QUOTES = [
+  "The love that lasts longest is the love that is never returned.",
+  "People ask for criticism, but they only want praise.",
+  "Excess on occasion is exhilarating. It prevents moderation from acquiring the deadening effect of a habit.",
+  "There is hardly anyone whose sexual life, if it were broadcast, would not fill the world at large with surprise and horror.",
+  "At a dinner party one should eat wisely but not too well, and talk well but not too wisely.",
+  "We are not the same persons this year as last; nor are those we love. It is a happy chance if we, changing, continue to love a changed person."
+];
+var DEFAULT_SUMMARY = 'I failed to summarize! I have dishonored my family! :skull_and_crossbones:';
+var SUMMARY_LENGTH = 7;//measured in sentences;
+
+var greetingString = "^(hey|sup|hello|hola|yo|howdy|hi)"
+var greetingArray = ["hey","sup","hello","hola","yo","howdy","hi"];//this could be a subset, in case you want to hear, but not say certain greetings
+/* end additions */
 
 var controller = Botkit.slackbot({
-    debug: true,
+    debug: process.env.debug ? process.env.debug : false,
 });
 
 var bot = controller.spawn({
     token: process.env.token
 }).startRTM();
 
+var extendedUtterances = Object.assign(bot.utterances, {
+  greeting: new RegExp(greetingString, "i")
+});
 
-controller.hears(['hello','hi'],'direct_message,direct_mention,mention',function(bot, message) {
+bot.utterances = extendedUtterances; //override here and not in original code in case of updates
+
+controller.hears([greetingString],'direct_message,direct_mention,mention',function(bot, message) {
 
     bot.api.reactions.add({
         timestamp: message.ts,
@@ -94,13 +126,16 @@ controller.hears(['hello','hi'],'direct_message,direct_mention,mention',function
     });
 
 
-    controller.storage.users.get(message.user,function(err, user) {
-        if (user && user.name) {
-            bot.reply(message,'Hello ' + user.name + '!!');
-        } else {
-            bot.reply(message,'Hello.');
-        }
-    });
+  controller.storage.users.get(message.user,function(err, user) {
+    var greet = _.sample(greetingArray);
+    greet = greet.charAt(0).toUpperCase() + greet.slice(1);
+
+    if (user && user.name) {
+        bot.reply(message,greet + ' ' + user.name + '!!');
+    } else {
+        bot.reply(message,greet + '.');
+    }
+  });
 });
 
 controller.hears(['call me (.*)'],'direct_message,direct_mention,mention',function(bot, message) {
@@ -119,7 +154,7 @@ controller.hears(['call me (.*)'],'direct_message,direct_mention,mention',functi
     });
 });
 
-controller.hears(['what is my name','who am i'],'direct_message,direct_mention,mention',function(bot, message) {
+controller.hears(['what is my name','who am i'],'direct_message,direct_mention,mention,ambient',function(bot, message) {
 
     controller.storage.users.get(message.user,function(err, user) {
         if (user && user.name) {
@@ -129,7 +164,91 @@ controller.hears(['what is my name','who am i'],'direct_message,direct_mention,m
         }
     });
 });
+/* sam additions */
 
+function summarizeAsync(paramsObj) {
+  return new Promise(function(resolve, reject) {
+    textapi.summarize(paramsObj,function(err,response) {
+        if(err !== null){
+          return reject(err);
+        }
+        resolve(response);
+    });
+  });
+};
+
+function getUrlToSummarize(message) {
+  var matches = message.text.match(/summarize (.*)/i)
+              ? message.text.match(/summarize (.*)/i)
+              : message.text.match(/need a summary of (.*)/i);
+  return matches[1].slice(1,-1); //remove <> that auto-wrap it for some reason, probably slack internal stuff
+}
+
+controller.hears(['your purpose'],'direct_message,direct_mention,mention',function(bot, message) {
+  controller.storage.users.get(message.user,function(err, user) {
+      bot.reply(message,'What is my purpose...? \n https://www.youtube.com/watch?v=wqzLoXjFT34');
+  });
+});
+
+controller.hears(['summarize (.*)', 'need a summary of (.*)'],'direct_message,direct_mention,mention,ambient',function(bot, message) {
+  var url = getUrlToSummarize(message);
+  if(url.indexOf('http') === -1) return bot.reply(message, 'Hey, uhm, if that was directed at me, I can only sumarize URLs.');
+
+  bot.reply(message, "I will read that and give you a summary! One moment...");
+  var summaryParams = {
+    url: url,
+    sentences_number: SUMMARY_LENGTH
+  };//this is how textAPI likes its parameters delivered
+  var summary = DEFAULT_SUMMARY;
+
+  summarizeAsync(summaryParams).then(function(response) {
+    bot.startConversation(message, function (err, convo) {
+      if (err) throw err;
+      summary = response.sentences.join('\n\n - ');
+      convo.sayFirst('Alright, here is a summary!\n');
+      convo.say(summary);
+
+      convo.ask('Would you also like me to classify that article?', [
+        {
+          pattern: bot.utterances.yes,
+          callback: function(response, convo) {
+            convo.sayFirst('Alright, one classification, coming right up!');
+            textapi.classify({
+              url: url
+            }, function(err, response) {
+              convo.say(response.categories[0].label);
+              convo.say("Aren't I so helpful? :smirk:");
+              convo.next();
+            })
+          }
+        },
+        {
+          pattern: bot.utterances.no,
+          callback: function(response, convo) {
+            convo.say(':ok_hand:');
+            convo.next();
+          }
+        },
+        {
+          default: true,
+          callback: function(response,convo) {
+            convo.say(':robot_face: :thinking_face:\nSorry, I didn\'t catch that...');
+            convo.repeat();
+            convo.next();
+        }
+      }
+      ]);
+    });
+  }).catch(function(e){
+    console.log(e);
+  });
+});
+
+controller.hears(['quote', 'quotation', 'maugham'],'direct_message,direct_mention,mention', function(bot, message) {
+  bot.reply(message, 'As my namesake said, "' + _.sample(SOMERSET_QUOTES) + '"');
+});
+
+/* END sam additions */
 
 controller.hears(['shutdown'],'direct_message,direct_mention,mention',function(bot, message) {
 
