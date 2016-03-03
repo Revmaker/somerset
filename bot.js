@@ -209,7 +209,7 @@ controller.hears(['summarize (.*)', 'need a summary of (.*)'],'direct_message,di
       convo.sayFirst('Alright, here is a summary!\n');
       convo.say(summary);
 
-      convo.ask('Would you also like me to classify that article?', [
+      convo.ask('\nWould you also like me to classify that article?', [
         {
           pattern: bot.utterances.yes,
           callback: function(response, convo) {
@@ -309,5 +309,5 @@ function formatUptime(uptime) {
 // To keep Heroku's free dyno awake
 http.createServer(function(request, response) {
     response.writeHead(200, {'Content-Type': 'text/plain'});
-    response.end('Ok, dyno is awake.');
+    response.end('YOU HAVE AWOKEN SOMERSET');
 }).listen(process.env.PORT || 5000);
